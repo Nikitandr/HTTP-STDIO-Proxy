@@ -1,0 +1,3 @@
+# HTTP STDIO Proxy Server Dependencies
+
+python-dotenv>=1.0.0

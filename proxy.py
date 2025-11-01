@@ -10,16 +10,45 @@ import atexit
 import sys
 import logging
 import argparse
+import os
+from dotenv import load_dotenv
 
-# Configuration
-PORT = 8000
-STDIO_SERVER_COMMAND = ['uv', '--directory', 'D:/Projects/Telegram-MCP-Server-Integration', 'run', 'main.py']
-REQUEST_TIMEOUT = 60
+# Load environment variables from .env file
+load_dotenv()
+
+# Configuration from environment variables with fallbacks
+PORT = int(os.getenv('PORT', 8000))
+REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', 60))
+PROCESS_TERMINATION_TIMEOUT = int(os.getenv('PROCESS_TERMINATION_TIMEOUT', 5))
+PROCESS_START_DELAY = float(os.getenv('PROCESS_START_DELAY', 0.5))
+
+# STDIO Server Command Configuration
+STDIO_COMMAND = os.getenv('STDIO_COMMAND', 'uv')
+STDIO_DIRECTORY = os.getenv('STDIO_DIRECTORY', '/path/to/your/mcp/server')
+STDIO_SCRIPT = os.getenv('STDIO_SCRIPT', 'main.py')
+
+# Build STDIO server command
+STDIO_SERVER_COMMAND = [STDIO_COMMAND, '--directory', STDIO_DIRECTORY, 'run', STDIO_SCRIPT]
+
+# HTTP Headers from environment
 COMMON_HEADERS = {
-    'Content-type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type'
+    'Content-type': os.getenv('CONTENT_TYPE', 'application/json'),
+    'Access-Control-Allow-Origin': os.getenv('CORS_ORIGIN', '*'),
+    'Access-Control-Allow-Headers': os.getenv('CORS_HEADERS', 'Content-Type')
 }
+
+def validate_config():
+    """Validate configuration and show warnings if needed."""
+    if STDIO_DIRECTORY == '/path/to/your/mcp/server':
+        print("⚠️  WARNING: Using default STDIO_DIRECTORY. Please update .env file!")
+    
+    if not os.path.exists(STDIO_DIRECTORY):
+        print(f"⚠️  WARNING: STDIO_DIRECTORY doesn't exist: {STDIO_DIRECTORY}")
+    
+    print(f"✅ Configuration loaded:")
+    print(f"   Port: {PORT}")
+    print(f"   Request timeout: {REQUEST_TIMEOUT}s")
+    print(f"   Proxying to:: {' '.join(STDIO_SERVER_COMMAND)}")
 
 # Global references
 global_server = None
@@ -95,7 +124,7 @@ def cleanup_process(server):
             if server.stdio_process.poll() is None:
                 server.stdio_process.terminate()
                 try:
-                    server.stdio_process.wait(timeout=5)
+                    server.stdio_process.wait(timeout=PROCESS_TERMINATION_TIMEOUT)
                     log_info("STDIO process terminated gracefully")
                 except subprocess.TimeoutExpired:
                     log_warning("STDIO process didn't terminate gracefully, killing...")
@@ -156,7 +185,7 @@ class StdioProxyHandler(http.server.BaseHTTPRequestHandler):
                 daemon=True
             )
             self.server.stdout_thread.start()
-            time.sleep(0.5)
+            time.sleep(PROCESS_START_DELAY)
             log_info("STDIO server process started")
 
     def do_POST(self):
@@ -229,6 +258,10 @@ def main():
     
     setup_logging(verbose)
     
+    # Validate configuration before starting
+    validate_config()
+    print()  # Empty line for better formatting
+    
     # Setup signal handlers and cleanup
     signal.signal(signal.SIGINT, lambda s, f: (cleanup_process(global_server), sys.exit(0)))
     if hasattr(signal, 'SIGTERM'):
@@ -240,12 +273,8 @@ def main():
         with ThreadingHTTPServer(("", PORT), StdioProxyHandler) as httpd:
             global_server = httpd
             
-            # Startup messages (always shown)
-            print(f"MCP STDIO Proxy Server starting on port {PORT}")
-            print(f"Proxying to: {' '.join(STDIO_SERVER_COMMAND)}")
             if verbose:
                 print(f"Verbose logging enabled")
-                print(f"Request timeout: {REQUEST_TIMEOUT} seconds")
             print("Press Ctrl+C to stop")
             
             httpd.serve_forever()
